@@ -1,63 +1,52 @@
-name: Build Android
+name: Build Android APK
 
 on:
-  workflow_dispatch:
-  push:
-    branches: [ "main" ]
-    paths:
-      - "simple_live_app/**"
-      - ".github/workflows/android.yml"
+  workflow_dispatch: # 支持手动点击按钮触发
 
 jobs:
-  build-android:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 可选：如果项目里用到 submodules，打开这一段
-      # - name: Checkout (with submodules)
-      #   uses: actions/checkout@v4
-      #   with:
-      #     submodules: recursive
-
-      # Flutter 安装（版本建议与你本机一致：3.38.9）
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: "3.38.9"
-          channel: "stable"
-          cache: true
-
-      # Java 17（Android 构建常用）
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: "temurin"
-          java-version: "17"
-          cache: gradle
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
 
-      - name: Flutter doctor
-        run: flutter doctor -v
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          # 使用 3.24.0 这个最稳的版本，3.38 太新了，容易翻车
+          flutter-version: "3.24.0"
+          channel: 'stable'
+          cache: true
 
-      - name: Pub get
+      - name: Get Dependencies
         working-directory: simple_live_app
         run: flutter pub get
 
-      # 可选：跑测试（没有就删）
-      # - name: Test
-      #   working-directory: simple_live_app
-      #   run: flutter test
+      # 【核心修复】强行向系统注入版本信息，绕过那个 null cannot be cast 报错
+      - name: Fix Gradle Null Pointer
+        run: |
+          mkdir -p simple_live_app/android
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > simple_live_app/android/local.properties
+          echo "flutter.sdk=$FLUTTER_HOME" >> simple_live_app/android/local.properties
+          echo "flutter.versionName=1.0.0" >> simple_live_app/android/local.properties
+          echo "flutter.versionCode=1" >> simple_live_app/android/local.properties
+          cat simple_live_app/android/local.properties
 
-      - name: Build APK (release)
+      - name: Build APK
         working-directory: simple_live_app
-      # 增加了版本号参数，防止 Gradle 读取 local.properties 失败
-        run: flutter build apk --release --split-per-abi --build-name=1.0.0 --build-number=1
+        # 增加 --no-tree-shake-icons 防止有些图标编译不过
+        run: flutter build apk --release --split-per-abi --no-tree-shake-icons --build-name=1.0.0 --build-number=1
 
-      - name: Upload APK artifacts
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: android-apk
-          path: |
-            simple_live_app/build/app/outputs/flutter-apk/*.apk
+          name: SimpleLive-APK
+          path: simple_live_app/build/app/outputs/flutter-apk/*.apk
