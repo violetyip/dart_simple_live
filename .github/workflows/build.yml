@@ -21,7 +21,6 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          # 换回你原本代码里的高版本，确保 intl 库不报错
           flutter-version: "3.38.9" 
           channel: 'stable'
 
@@ -29,18 +28,34 @@ jobs:
         working-directory: simple_live_app
         run: flutter pub get
 
-      # 【核心补丁】保留这一步，专门修你最早遇到的那个 Gradle null 报错
-      - name: Create local.properties
+      # 【终极补丁：伪造签名库与环境变量】
+      - name: Hack Signature and Properties
         run: |
+          # 1. 伪造一个 Android 签名文件 (key.jks)
+          keytool -genkey -v -keystore simple_live_app/android/app/key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias upload -dname "CN=Fake" -storepass 123456 -keypass 123456
+          
+          # 2. 伪造密码配置文件 (喂给 gradle 读取)
+          echo "storePassword=123456" > simple_live_app/android/app/key.properties
+          echo "keyPassword=123456" >> simple_live_app/android/app/key.properties
+          echo "keyAlias=upload" >> simple_live_app/android/app/key.properties
+          echo "storeFile=key.jks" >> simple_live_app/android/app/key.properties
+          
+          # 3. 补齐所有基础环境变量，并在 local.properties 里也塞一份密码（双重保险）
           mkdir -p simple_live_app/android
           echo "sdk.dir=$ANDROID_SDK_ROOT" > simple_live_app/android/local.properties
           echo "flutter.sdk=$FLUTTER_HOME" >> simple_live_app/android/local.properties
           echo "flutter.versionName=1.0.0" >> simple_live_app/android/local.properties
           echo "flutter.versionCode=1" >> simple_live_app/android/local.properties
+          echo "storePassword=123456" >> simple_live_app/android/local.properties
+          echo "keyPassword=123456" >> simple_live_app/android/local.properties
+          echo "keyAlias=upload" >> simple_live_app/android/local.properties
+          echo "storeFile=../app/key.jks" >> simple_live_app/android/local.properties
+          
+          # 4. 暴力正则手术：把所有强行转换 String 的代码加上安全处理，绝杀 null 报错
+          sed -i 's/as String/as? String ?: ""/g' simple_live_app/android/app/build.gradle.kts
 
       - name: Build APK
         working-directory: simple_live_app
-        # 加入 --no-tree-shake-icons 是为了防止有些图标导致编译失败
         run: flutter build apk --release --split-per-abi --no-tree-shake-icons --build-name=1.0.0 --build-number=1
 
       - name: Upload Artifact
