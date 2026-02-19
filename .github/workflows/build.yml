@@ -52,7 +52,8 @@ jobs:
 
       - name: Build APK (release)
         working-directory: simple_live_app
-        run: flutter build apk --release --split-per-abi
+      # 增加了版本号参数，防止 Gradle 读取 local.properties 失败
+        run: flutter build apk --release --split-per-abi --build-name=1.0.0 --build-number=1
 
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
