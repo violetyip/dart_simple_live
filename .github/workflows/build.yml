@@ -1,7 +1,7 @@
 name: Build Android APK
 
 on:
-  workflow_dispatch: # 支持手动点击按钮触发
+  workflow_dispatch:
 
 jobs:
   build:
@@ -21,16 +21,17 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          # 使用 3.24.0 这个最稳的版本，3.38 太新了，容易翻车
-          flutter-version: "3.24.0"
+          # 升级到 3.27.0，这个版本对 intl 0.20.x 的兼容性更好
+          flutter-version: "3.27.0"
           channel: 'stable'
           cache: true
 
-      - name: Get Dependencies
+      # 【核心修复点 1】强行升级项目依赖，解决 intl 版本冲突
+      - name: Upgrade Dependencies
         working-directory: simple_live_app
-        run: flutter pub get
+        run: flutter pub upgrade
 
-      # 【核心修复】强行向系统注入版本信息，绕过那个 null cannot be cast 报错
+      # 【核心修复点 2】继续保留之前的 Gradle 补丁
       - name: Fix Gradle Null Pointer
         run: |
           mkdir -p simple_live_app/android
@@ -38,12 +39,11 @@ jobs:
           echo "flutter.sdk=$FLUTTER_HOME" >> simple_live_app/android/local.properties
           echo "flutter.versionName=1.0.0" >> simple_live_app/android/local.properties
           echo "flutter.versionCode=1" >> simple_live_app/android/local.properties
-          cat simple_live_app/android/local.properties
 
       - name: Build APK
         working-directory: simple_live_app
-        # 增加 --no-tree-shake-icons 防止有些图标编译不过
-        run: flutter build apk --release --split-per-abi --no-tree-shake-icons --build-name=1.0.0 --build-number=1
+        # 增加 --no-pub 确保它用我们刚才 upgrade 过的依赖环境
+        run: flutter build apk --release --split-per-abi --no-tree-shake-icons --no-pub --build-name=1.0.0 --build-number=1
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
