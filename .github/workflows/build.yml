@@ -28,35 +28,35 @@ jobs:
         working-directory: simple_live_app
         run: flutter pub get
 
-      # 【终极补丁：伪造签名库与环境变量】
-      - name: Hack Signature and Properties
+      # 【核心路径修复】使用绝对路径生成签名文件
+      - name: Hack Signature with Absolute Paths
         run: |
-          # 1. 伪造一个 Android 签名文件 (key.jks)
-          keytool -genkey -v -keystore simple_live_app/android/app/key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias upload -dname "CN=Fake" -storepass 123456 -keypass 123456
+          # 定义绝对路径变量
+          BASE_PATH=$GITHUB_WORKSPACE/simple_live_app/android/app
+          mkdir -p $BASE_PATH
           
-          # 2. 伪造密码配置文件 (喂给 gradle 读取)
-          echo "storePassword=123456" > simple_live_app/android/app/key.properties
-          echo "keyPassword=123456" >> simple_live_app/android/app/key.properties
-          echo "keyAlias=upload" >> simple_live_app/android/app/key.properties
-          echo "storeFile=key.jks" >> simple_live_app/android/app/key.properties
+          # 1. 生成签名证书
+          keytool -genkey -v -keystore $BASE_PATH/key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias upload -dname "CN=Fake" -storepass 123456 -keypass 123456
           
-          # 3. 补齐所有基础环境变量，并在 local.properties 里也塞一份密码（双重保险）
-          mkdir -p simple_live_app/android
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > simple_live_app/android/local.properties
-          echo "flutter.sdk=$FLUTTER_HOME" >> simple_live_app/android/local.properties
-          echo "flutter.versionName=1.0.0" >> simple_live_app/android/local.properties
-          echo "flutter.versionCode=1" >> simple_live_app/android/local.properties
-          echo "storePassword=123456" >> simple_live_app/android/local.properties
-          echo "keyPassword=123456" >> simple_live_app/android/local.properties
-          echo "keyAlias=upload" >> simple_live_app/android/local.properties
-          echo "storeFile=../app/key.jks" >> simple_live_app/android/local.properties
+          # 2. 在 app 目录下生成 key.properties，并使用绝对路径指向 jks
+          echo "storePassword=123456" > $BASE_PATH/key.properties
+          echo "keyPassword=123456" >> $BASE_PATH/key.properties
+          echo "keyAlias=upload" >> $BASE_PATH/key.properties
+          echo "storeFile=$BASE_PATH/key.jks" >> $BASE_PATH/key.properties
           
-          # 4. 暴力正则手术：把所有强行转换 String 的代码加上安全处理，绝杀 null 报错
-          sed -i 's/as String/as? String ?: ""/g' simple_live_app/android/app/build.gradle.kts
+          # 3. 在 android 目录下也备一份，防止 Gradle 找不到
+          cp $BASE_PATH/key.properties $GITHUB_WORKSPACE/simple_live_app/android/key.properties
+          
+          # 4. 再次确保 local.properties 包含绝对路径的 SDK 信息
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > $GITHUB_WORKSPACE/simple_live_app/android/local.properties
+          echo "flutter.sdk=$FLUTTER_HOME" >> $GITHUB_WORKSPACE/simple_live_app/android/local.properties
+          echo "flutter.versionName=1.0.0" >> $GITHUB_WORKSPACE/simple_live_app/android/local.properties
+          echo "flutter.versionCode=1" >> $GITHUB_WORKSPACE/simple_live_app/android/local.properties
 
       - name: Build APK
         working-directory: simple_live_app
-        run: flutter build apk --release --split-per-abi --no-tree-shake-icons --build-name=1.0.0 --build-number=1
+        # 加入 --no-pub 减少重复检查，直接打包
+        run: flutter build apk --release --split-per-abi --no-tree-shake-icons --no-pub --build-name=1.0.0 --build-number=1
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
