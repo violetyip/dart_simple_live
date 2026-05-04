@@ -66,30 +66,137 @@ class DouyinSite implements LiveSite {
 
   @override
   Future<List<LiveCategory>> getCategores() async {
-    List<LiveCategory> categories = [];
-    var result = await HttpClient.instance.getText(
-      "https://live.douyin.com/",
-      queryParameters: {},
+    // Try the stable API endpoint first.
+    try {
+      var categories = await _getCategoriesFromApi();
+      if (categories.isNotEmpty) {
+        _logDebug("API returned ${categories.length} categories");
+        return categories;
+      }
+      _logDebug("API returned empty categories, falling back to HTML parsing");
+    } catch (e) {
+      _logDebug("API categories request failed: $e, falling back to HTML parsing");
+      CoreLog.error(e);
+    }
+
+    // Fall back to HTML parsing with hardened error handling.
+    return await _getCategoriesFromHtml();
+  }
+
+  /// Fetch category list from the Douyin web partition list API.
+  Future<List<LiveCategory>> _getCategoriesFromApi() async {
+    String serverUrl = "https://live.douyin.com/webcast/web/partition/list/";
+    var uri = Uri.parse(serverUrl).replace(
+      scheme: "https",
+      port: 443,
+      queryParameters: {
+        "aid": "6383",
+        "app_name": "douyin_web",
+        "live_id": "1",
+        "device_platform": "web",
+        "language": "zh-CN",
+        "enter_from": "page_refresh",
+        "cookie_enabled": "true",
+        "screen_width": "1980",
+        "screen_height": "1080",
+        "browser_language": "zh-CN",
+        "browser_platform": "Win32",
+        "browser_name": "Edge",
+        "browser_version": "125.0.0.0",
+        "browser_online": "true",
+      },
+    );
+    var requestUrl = DouyinSign.getAbogusUrl(uri.toString(), kDefaultUserAgent);
+
+    var result = await HttpClient.instance.getJson(
+      requestUrl,
       header: await getRequestHeaders(),
     );
 
-    var renderData =
-        RegExp(
-          r'\{\\"pathname\\":\\"\/\\",\\"categoryData.*?\]\\n',
-        ).firstMatch(result)?.group(0) ??
-        "";
-    var renderDataJson = json.decode(
-      renderData
-          .trim()
-          .replaceAll('\\"', '"')
-          .replaceAll(r"\\", r"\")
-          .replaceAll(']\\n', ""),
-    );
+    // The API may return the list at result["data"]["data"] or result["data"].
+    List? partitionList;
+    var dataField = result["data"];
+    if (dataField is List) {
+      partitionList = dataField;
+    } else if (dataField is Map) {
+      var inner = dataField["data"];
+      if (inner is List) {
+        partitionList = inner;
+      }
+    }
 
-    for (var item in renderDataJson["categoryData"]) {
+    if (partitionList == null || partitionList.isEmpty) {
+      _logDebug("API partition list is null or empty (data=$dataField)");
+      return [];
+    }
+
+    return _buildCategoriesFromList(partitionList);
+  }
+
+  /// Parse categories from the Douyin homepage HTML as a fallback.
+  Future<List<LiveCategory>> _getCategoriesFromHtml() async {
+    _logDebug("Fetching categories from HTML fallback");
+
+    String htmlContent;
+    try {
+      htmlContent = await HttpClient.instance.getText(
+        "https://live.douyin.com/",
+        queryParameters: {},
+        header: await getRequestHeaders(),
+      );
+    } catch (e) {
+      _logDebug("Failed to fetch HTML: $e");
+      CoreLog.error(e);
+      throw Exception("抖音分类获取失败: 网络请求错误 $e");
+    }
+
+    var match = RegExp(
+      r'\{\\"pathname\\":\\"\/\\",\\"categoryData.*?\]\\n',
+    ).firstMatch(htmlContent);
+
+    if (match == null) {
+      _logDebug(
+        "HTML parsing failed: categoryData regex not found. "
+        "HTML snippet: ${htmlContent.substring(0, min(300, htmlContent.length))}",
+      );
+      throw Exception("抖音分类获取失败: HTML中未找到categoryData，页面结构可能已变化");
+    }
+
+    Map<String, dynamic> renderDataJson;
+    try {
+      renderDataJson = json.decode(
+        match
+            .group(0)!
+            .trim()
+            .replaceAll('\\"', '"')
+            .replaceAll(r"\\", r"\")
+            .replaceAll(']\\n', ""),
+      );
+    } catch (e) {
+      _logDebug("HTML parsing failed: JSON decode error: $e");
+      CoreLog.error(e);
+      throw Exception("抖音分类获取失败: JSON解析错误 $e");
+    }
+
+    var categoryData = renderDataJson["categoryData"];
+    if (categoryData is! List || categoryData.isEmpty) {
+      _logDebug("HTML parsing: categoryData is null or empty");
+      throw Exception("抖音分类获取失败: categoryData为空");
+    }
+
+    var categories = _buildCategoriesFromList(categoryData);
+    _logDebug("HTML parsing returned ${categories.length} categories");
+    return categories;
+  }
+
+  /// Build a [LiveCategory] list from a raw partition list (shared by API and HTML paths).
+  List<LiveCategory> _buildCategoriesFromList(List partitionList) {
+    List<LiveCategory> categories = [];
+    for (var item in partitionList) {
       List<LiveSubCategory> subs = [];
       var id = '${item["partition"]["id_str"]},${item["partition"]["type"]}';
-      for (var subItem in item["sub_partition"]) {
+      var subPartitions = item["sub_partition"] as List? ?? [];
+      for (var subItem in subPartitions) {
         var subCategory = LiveSubCategory(
           id: '${subItem["partition"]["id_str"]},${subItem["partition"]["type"]}',
           name: asT<String?>(subItem["partition"]["title"]) ?? "",
